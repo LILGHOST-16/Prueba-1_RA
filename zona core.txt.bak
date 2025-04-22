@@ -1,0 +1,21 @@
+
+---------------------------------
+Switch: sw1
+IP: 192.172.10.1
+Jerarquía: Distribución
+Servicios: VLAN, VLAN, Trunking, Datos
+---------------------------------
+
+---------------------------------
+Switch: SW2
+IP: 192.172.10.2
+Jerarquía: Núcleo
+Servicios: VLAN
+---------------------------------
+
+---------------------------------
+Router: R2
+IP: 192.172.11.2
+Jerarquía: Distribución
+Servicios: Enrutamiento
+---------------------------------
