@@ -2,6 +2,8 @@ import re
 from enum import Enum
 import os
 from time import sleep
+import json
+from datetime import datetime
 
 # 🌈 Paleta de colores y estilos
 class Color:
@@ -68,7 +70,96 @@ CAPAS_RED = {
     'ACCESO': '🔌 Acceso'
 }
 
-def validar_ip(ip):
+# 📂 Funciones para manejo de archivos JSON
+def guardar_dispositivos(dispositivos, archivo='dispositivos.json'):
+    try:
+        # Convertir los dispositivos a un formato serializable
+        dispositivos_serializables = []
+        for disp in dispositivos:
+            disp_dict = {}
+            lineas = [linea.strip() for linea in disp.split('\n') if linea.strip()]
+            for linea in lineas:
+                if ':' in linea:
+                    clave, valor = linea.split(':', 1)
+                    clave = clave.strip().replace('🔧', '').replace('🏷️', '').replace('🌍', '').replace('📊', '').replace('🛠️', '').replace(Color.CYAN, '').replace(Color.BOLD, '').replace(Color.END, '').strip()
+                    valor = valor.strip()
+                    disp_dict[clave] = valor
+            
+            # Agregar fecha de modificación
+            disp_dict['ultima_modificacion'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            dispositivos_serializables.append(disp_dict)
+        
+        with open(archivo, 'w') as f:
+            json.dump(dispositivos_serializables, f, indent=4)
+        
+        return True
+    except Exception as e:
+        mostrar_mensaje(f"Error al guardar dispositivos: {str(e)}", "error")
+        return False
+
+def cargar_dispositivos(archivo='dispositivos.json'):
+    try:
+        if not os.path.exists(archivo):
+            return []
+        
+        with open(archivo, 'r') as f:
+            datos = json.load(f)
+        
+        dispositivos = []
+        for disp_dict in datos:
+            # Reconstruir el dispositivo en el formato original
+            lineas = []
+            if 'TIPO' in disp_dict:
+                lineas.append(f"{Color.CYAN}🔧 {Color.BOLD}TIPO:{Color.END} {disp_dict['TIPO']}")
+            if 'NOMBRE' in disp_dict:
+                lineas.append(f"{Color.CYAN}🏷️ {Color.BOLD}NOMBRE:{Color.END} {disp_dict['NOMBRE']}")
+            if 'IP' in disp_dict:
+                lineas.append(f"{Color.CYAN}🌍 {Color.BOLD}IP:{Color.END} {disp_dict['IP']}")
+            if 'CAPA' in disp_dict:
+                lineas.append(f"{Color.CYAN}📊 {Color.BOLD}CAPA:{Color.END} {disp_dict['CAPA']}")
+            if 'SERVICIOS' in disp_dict:
+                lineas.append(f"{Color.CYAN}🛠️ {Color.BOLD}SERVICIOS:{Color.END} {disp_dict['SERVICIOS']}")
+            
+            separador = f"{Color.BLUE}{'═' * 60}{Color.END}"
+            dispositivo = f"\n{separador}\n" + "\n".join(lineas) + f"\n{separador}"
+            dispositivos.append(dispositivo)
+        
+        return dispositivos
+    except Exception as e:
+        mostrar_mensaje(f"Error al cargar dispositivos: {str(e)}", "error")
+        return []
+
+def obtener_ips_dispositivos(dispositivos):
+    """Obtiene todas las IPs de los dispositivos existentes"""
+    ips = []
+    for disp in dispositivos:
+        try:
+            lineas = [linea.strip() for linea in disp.split('\n') if linea.strip()]
+            ip_linea = next((linea for linea in lineas if "IP:" in linea), None)
+            if ip_linea:
+                ip = ip_linea.split("IP:")[1].strip()
+                if ip:
+                    ips.append(ip)
+        except:
+            continue
+    return ips
+
+def validar_ip(ip, dispositivos):
+    # Verificar si la IP ya está en uso
+    ips_existentes = obtener_ips_dispositivos(dispositivos)
+    if ip in ips_existentes:
+        # Obtener nombre del dispositivo que tiene esta IP
+        for disp in dispositivos:
+            try:
+                lineas = [linea.strip() for linea in disp.split('\n') if linea.strip()]
+                ip_linea = next((linea for linea in lineas if "IP:" in linea), None)
+                if ip_linea and ip_linea.split("IP:")[1].strip() == ip:
+                    nombre_linea = next((linea for linea in lineas if "NOMBRE:" in linea), None)
+                    nombre = nombre_linea.split("NOMBRE:")[1].strip() if nombre_linea else "dispositivo desconocido"
+                    raise ValueError(f"La IP {ip} ya está en uso por el dispositivo: {nombre}")
+            except:
+                continue
+    
     # Verificación básica de formato
     if not re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip):
         raise ValueError("Formato incorrecto. Debe ser X.X.X.X donde X es un número (0-255)")
@@ -105,11 +196,24 @@ def validar_ip(ip):
     
     return True
 
-def validar_nombre(nombre):
+def validar_nombre(nombre, dispositivos):
     if not re.match(r'^[a-zA-Z0-9\-\.]+$', nombre):
         raise ValueError("El nombre solo puede contener letras, números, guiones (-) y puntos (.)")
     if len(nombre) > 30:
         raise ValueError("El nombre no puede exceder los 30 caracteres")
+    
+    # Verificar que el nombre no esté en uso
+    for disp in dispositivos:
+        try:
+            lineas = [linea.strip() for linea in disp.split('\n') if linea.strip()]
+            nombre_linea = next((linea for linea in lineas if "NOMBRE:" in linea), None)
+            if nombre_linea:
+                nombre_existente = nombre_linea.split("NOMBRE:")[1].strip()
+                if nombre_existente.lower() == nombre.lower():
+                    raise ValueError(f"El nombre '{nombre}' ya está en uso por otro dispositivo")
+        except:
+            continue
+    
     return True
 
 def validar_servicios(servicios):
@@ -121,12 +225,6 @@ def validar_servicios(servicios):
 # 🖥️ Función para crear dispositivo
 def crear_dispositivo(tipo, nombre, ip=None, capa=None, servicios=None):
     try:
-        validar_nombre(nombre)
-        if ip:
-            validar_ip(ip)
-        if servicios:
-            validar_servicios(servicios)
-        
         dispositivo = [
             f"{Color.CYAN}🔧 {Color.BOLD}TIPO:{Color.END} {tipo}",
             f"{Color.CYAN}🏷️ {Color.BOLD}NOMBRE:{Color.END} {nombre}"
@@ -152,8 +250,10 @@ def mostrar_menu_principal():
     print(f"{Color.BOLD}{Color.YELLOW}2.{Color.END} 📜 Mostrar todos los dispositivos")
     print(f"{Color.BOLD}{Color.YELLOW}3.{Color.END} 🔍 Buscar dispositivo por nombre")
     print(f"{Color.BOLD}{Color.YELLOW}4.{Color.END} ➕ Agregar servicio a dispositivo")
-    print(f"{Color.BOLD}{Color.YELLOW}5.{Color.END} ❌ Eliminar dispositivo")
-    print(f"{Color.BOLD}{Color.YELLOW}6.{Color.END} 🚪 Salir")
+    print(f"{Color.BOLD}{Color.YELLOW}5.{Color.END} 🌐 Agregar/modificar IP de dispositivo")
+    print(f"{Color.BOLD}{Color.YELLOW}6.{Color.END} ❌ Eliminar dispositivo")
+    print(f"{Color.BOLD}{Color.YELLOW}7.{Color.END} 💾 Guardar dispositivos")
+    print(f"{Color.BOLD}{Color.YELLOW}8.{Color.END} 🚪 Salir")
     print(f"\n{Color.BLUE}{'═' * 60}{Color.END}")
 
 def seleccionar_opcion(opciones, titulo):
@@ -171,14 +271,14 @@ def seleccionar_opcion(opciones, titulo):
         except ValueError:
             mostrar_mensaje("Entrada inválida. Por favor ingrese un número.", "error")
 
-def ingresar_ip():
+def ingresar_ip(dispositivos):
     while True:
         ip = input(f"{Color.GREEN}↳ Ingrese la dirección IP (deje vacío si no aplica): {Color.END}").strip()
         if not ip:
             return None
         
         try:
-            validar_ip(ip)
+            validar_ip(ip, dispositivos)
             return ip
         except ValueError as e:
             mostrar_mensaje(f"❌ Error en la IP: {e}", "error")
@@ -189,7 +289,7 @@ def ingresar_ip():
             print(f"- {Color.CYAN}172.16.0.1{Color.END} (privada clase B)")
             print(f"- {Color.CYAN}8.8.8.8{Color.END} (DNS público de Google)")
 
-def agregar_dispositivo_interactivo():
+def agregar_dispositivo_interactivo(dispositivos):
     mostrar_titulo("AGREGAR NUEVO DISPOSITIVO")
     
     # Seleccionar tipo
@@ -199,15 +299,18 @@ def agregar_dispositivo_interactivo():
     while True:
         nombre = input(f"{Color.GREEN}↳ Ingrese el nombre del dispositivo: {Color.END}").strip()
         try:
-            if validar_nombre(nombre):
+            if validar_nombre(nombre, dispositivos):
                 break
         except ValueError as e:
             mostrar_mensaje(str(e), "error")
     
-    # Ingresar IP (solo para algunos dispositivos)
+    # Ingresar IP (ahora opcional para todos los dispositivos)
     ip = None
-    if tipo in [TIPOS_DISPOSITIVO['ROUTER'], TIPOS_DISPOSITIVO['SERVIDOR'], TIPOS_DISPOSITIVO['FIREWALL']]:
-        ip = ingresar_ip()
+    try:
+        ip = ingresar_ip(dispositivos)
+    except ValueError as e:
+        mostrar_mensaje(f"No se puede crear el dispositivo: {str(e)}", "error")
+        return None
     
     # Seleccionar capa (solo para algunos dispositivos)
     capa = None
@@ -234,6 +337,79 @@ def agregar_dispositivo_interactivo():
     
     # Crear y retornar dispositivo
     return crear_dispositivo(tipo, nombre, ip, capa, servicios)
+
+def agregar_ip_dispositivo(dispositivos):
+    mostrar_titulo("AGREGAR/MODIFICAR IP DE DISPOSITIVO")
+    if not dispositivos:
+        mostrar_mensaje("No hay dispositivos registrados", "advertencia")
+        sleep(2)
+        return
+    
+    # Mostrar lista de dispositivos
+    dispositivos_validos = []
+    print(f"{Color.BOLD}📋 Dispositivos disponibles:{Color.END}")
+    
+    for i, disp in enumerate(dispositivos, 1):
+        try:
+            lineas = [linea.strip() for linea in disp.split('\n') if linea.strip()]
+            nombre_linea = next((linea for linea in lineas if "NOMBRE:" in linea), None)
+            ip_linea = next((linea for linea in lineas if "IP:" in linea), None)
+            
+            if nombre_linea:
+                nombre = nombre_linea.split("NOMBRE:")[1].strip()
+                ip_actual = ip_linea.split("IP:")[1].strip() if ip_linea else "Sin IP"
+                print(f"{Color.YELLOW}{i}.{Color.END} {nombre} - IP actual: {ip_actual}")
+                dispositivos_validos.append(disp)
+        except:
+            continue
+    
+    if not dispositivos_validos:
+        mostrar_mensaje("No hay dispositivos válidos para modificar", "error")
+        sleep(2)
+        return
+    
+    try:
+        num = input(f"\n{Color.GREEN}↳ Seleccione el número del dispositivo (1-{len(dispositivos_validos)}): {Color.END}")
+        num = int(num) - 1
+        if 0 <= num < len(dispositivos_validos):
+            # Obtener el índice real en la lista original
+            disp_real = dispositivos_validos[num]
+            idx_real = dispositivos.index(disp_real)
+            
+            # Pedir nueva IP con validación
+            try:
+                nueva_ip = ingresar_ip([d for i, d in enumerate(dispositivos) if i != idx_real])
+            except ValueError as e:
+                mostrar_mensaje(f"No se puede modificar la IP: {str(e)}", "error")
+                sleep(2)
+                return
+            
+            # Actualizar el dispositivo
+            disp_lines = [linea.strip() for linea in dispositivos[idx_real].split('\n') if linea.strip()]
+            ip_line = next((i for i, line in enumerate(disp_lines) if "IP:" in line), None)
+            
+            if ip_line is not None:
+                # Modificar IP existente
+                if nueva_ip:
+                    disp_lines[ip_line] = f"{Color.CYAN}🌍 {Color.BOLD}IP:{Color.END} {nueva_ip}"
+                    mostrar_mensaje(f"IP actualizada a {nueva_ip}", "exito")
+                else:
+                    # Eliminar la IP si se dejó vacío
+                    disp_lines.pop(ip_line)
+                    mostrar_mensaje("IP eliminada del dispositivo", "exito")
+            elif nueva_ip:
+                # Insertar nueva IP antes del separador final
+                disp_lines.insert(-1, f"{Color.CYAN}🌍 {Color.BOLD}IP:{Color.END} {nueva_ip}")
+                mostrar_mensaje(f"IP {nueva_ip} agregada al dispositivo", "exito")
+            
+            dispositivos[idx_real] = "\n".join(disp_lines)
+            sleep(2)
+        else:
+            mostrar_mensaje("Número de dispositivo inválido", "error")
+            sleep(2)
+    except ValueError:
+        mostrar_mensaje("Entrada inválida. Debe ingresar un número.", "error")
+        sleep(2)
 
 # 📋 Función para mostrar dispositivos
 def mostrar_dispositivos(dispositivos, titulo="LISTADO DE DISPOSITIVOS"):
@@ -432,21 +608,23 @@ def eliminar_dispositivo(dispositivos):
 
 # 🎛️ Función principal
 def main():
-    dispositivos = []
+    # Cargar dispositivos existentes al iniciar
+    dispositivos = cargar_dispositivos()
     
     while True:
         mostrar_menu_principal()
-        opcion = input(f"{Color.GREEN}↳ Seleccione una opción (1-6): {Color.END}")
+        opcion = input(f"{Color.GREEN}↳ Seleccione una opción (1-8): {Color.END}")
         
         if opcion == "1":
-            dispositivo = agregar_dispositivo_interactivo()
-            if dispositivo and not "❌ Error" in dispositivo:
-                dispositivos.append(dispositivo)
-                mostrar_mensaje("Dispositivo agregado exitosamente!", "exito")
-                sleep(2)
-            elif dispositivo:
-                print(dispositivo)
-                input(f"\n{Color.GREEN}Presione Enter para continuar...{Color.END}")
+            dispositivo = agregar_dispositivo_interactivo(dispositivos)
+            if dispositivo:
+                if "❌ Error" in dispositivo:
+                    print(dispositivo)
+                    input(f"\n{Color.GREEN}Presione Enter para continuar...{Color.END}")
+                else:
+                    dispositivos.append(dispositivo)
+                    mostrar_mensaje("Dispositivo agregado exitosamente!", "exito")
+                    sleep(2)
         
         elif opcion == "2":
             mostrar_dispositivos(dispositivos)
@@ -458,16 +636,34 @@ def main():
             agregar_servicio_dispositivo(dispositivos)
         
         elif opcion == "5":
-            eliminar_dispositivo(dispositivos)
+            agregar_ip_dispositivo(dispositivos)
         
         elif opcion == "6":
+            eliminar_dispositivo(dispositivos)
+        
+        elif opcion == "7":
+            if guardar_dispositivos(dispositivos):
+                mostrar_mensaje("Dispositivos guardados exitosamente en 'dispositivos.json'", "exito")
+            else:
+                mostrar_mensaje("Error al guardar los dispositivos", "error")
+            sleep(2)
+        
+        elif opcion == "8":
+            # Preguntar si desea guardar antes de salir
+            guardar = input(f"{Color.YELLOW}¿Desea guardar los cambios antes de salir? (s/n): {Color.END}").lower()
+            if guardar == 's':
+                if guardar_dispositivos(dispositivos):
+                    mostrar_mensaje("Dispositivos guardados exitosamente", "exito")
+                else:
+                    mostrar_mensaje("Error al guardar los dispositivos", "error")
+            
             mostrar_mensaje("Saliendo del sistema... ¡Hasta pronto! 👋", "info")
             sleep(2)
             limpiar_pantalla()
             break
         
         else:
-            mostrar_mensaje("Opción inválida. Por favor seleccione 1-6", "error")
+            mostrar_mensaje("Opción inválida. Por favor seleccione 1-8", "error")
             sleep(2)
 
 if __name__ == "__main__":
